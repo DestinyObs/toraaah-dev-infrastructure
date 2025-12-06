@@ -1,0 +1,125 @@
+services:
+  # elasticsearch:
+  #   image: elasticsearch:8.15.1
+  #   restart: always
+  #   ports:
+  #     - "9200:9200"
+  #   volumes:
+  #     - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+  #     - ./elasticsearch.keystore:/usr/share/elasticsearch/config/elasticsearch.keystore
+  #   environment:
+  #     - KEYSTORE_PASSWORD=${ELS_KEYSTORE_PASSWORD}
+  #   networks:
+  #     - app-network
+
+  
+  redis:
+    image: redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres
+    restart: always
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  web:
+    image: wondamo/toraaah-backend:latest
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - app-network
+    environment: &web-environment
+      API_KEY: ${API_KEY}
+      API_SECRET: ${API_SECRET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME}
+      CLOUD_NAME: ${CLOUD_NAME}
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${DB_NAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DJANGO_DEBUG: ${DJANGO_DEBUG}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER}
+      EMAIL_PORT: ${EMAIL_PORT}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS}
+      EMAIL_USE_SSL: ${EMAIL_USE_SSL}
+      FLUTTERWAVE_PUBLIC_KEY: ${FLUTTERWAVE_PUBLIC_KEY}
+      FLUTTERWAVE_SECRET_KEY: ${FLUTTERWAVE_SECRET_KEY}
+      ELS_USERNAME: ${ELS_USERNAME}
+      ELS_PASSWORD: ${ELS_PASSWORD}
+      ELS_HOST: ${ELS_HOST}
+      REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      BIBLE_API_KEY: ${BIBLE_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID}
+      FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON}
+      SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      STREAM_API_KEY: ${STREAM_API_KEY}
+      STREAM_API_SECRET: ${STREAM_API_SECRET}
+    depends_on:
+      - redis
+
+  celery:
+    image: wondamo/toraaah-backend:latest
+    restart: always
+    command: celery -A Torah worker -l info
+    networks:
+      - app-network
+    environment:
+      <<: *web-environment
+    depends_on:
+      - redis
+
+  celery_beat:
+    image: wondamo/toraaah-backend:latest
+    restart: always
+    command: celery -A Torah beat -l info
+    networks:
+      - app-network
+    environment:
+      <<: *web-environment
+    depends_on:
+      - redis
+
+  nginx:
+    image: wondamo/nginx-rtmp:latest
+    restart: always
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:1935:1935"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./static:/app/static
+    depends_on:
+      - web
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    external: true
+    # driver: bridge

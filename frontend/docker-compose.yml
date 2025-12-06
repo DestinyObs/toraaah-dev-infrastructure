@@ -1,0 +1,104 @@
+services:
+ user:
+  image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/toraaah-user:latest # Build from downloaded Docker image
+  restart: always
+  # build:
+  #   context: .
+  #   dockerfile: ./apps/web/Dockerfile
+  env_file:
+   - .env
+  ports:
+   - "127.0.0.1:3000:3000"
+  healthcheck:
+   test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+   interval: 30s
+   timeout: 10s
+   retries: 3
+  networks:
+   - app-network
+
+   
+ minister:
+  image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/toraaah-minister:latest # Build from downloaded Docker image
+  restart: always
+  # build:
+  #   context: .
+  #   dockerfile: ./apps/minister/Dockerfile
+  env_file:
+   - .env
+  ports:
+   - "127.0.0.1:3001:3000" # Use a different port for the subdomain
+  healthcheck:
+   test: ["CMD", "curl", "-f", "http://localhost:3001/"]
+   interval: 30s
+   timeout: 10s
+   retries: 3
+  networks:
+   - app-network
+
+
+ ministry:
+  image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/toraaah-ministry:latest # Build from downloaded Docker image
+  restart: always
+  # build:
+  #   context: .
+  #   dockerfile: ./apps/ministry/Dockerfile
+  env_file:
+   - .env
+  ports:
+   - "127.0.0.1:3002:3000" # Use a different port for the subdomain
+  healthcheck:
+   test: ["CMD", "curl", "-f", "http://localhost:3002/"]
+   interval: 30s
+   timeout: 10s
+   retries: 3
+  networks:
+   - app-network
+
+
+ nginx:
+  image: nginx:alpine
+  restart: always
+  volumes:
+   - ./nginx.dev.conf:/etc/nginx/nginx.conf
+   - /etc/letsencrypt:/etc/letsencrypt
+   - /home/ubuntu/actions-runner/_work/Backend/Backend/static:/app/static
+  ports:
+   - "80:80"
+   - "443:443"
+  depends_on:
+   - user # Ensure Nginx starts after the Next.js app
+   - minister
+   - ministry
+  networks:
+   - app-network
+
+
+ gtm-sst-preview:
+  image: gcr.io/cloud-tagging-10302018/gtm-cloud-image:stable
+  restart: always
+  ports:
+   - "127.0.0.1:8082:8080"
+  environment:
+   RUN_AS_PREVIEW_SERVER: "true" # Enables preview server mode
+   CONTAINER_CONFIG: "aWQ9R1RNLVRRNE5NWDhWJmVudj0xJmF1dGg9dnRmOXBpWTdEVDFVc3hSVnpOVW15dw=="
+  networks:
+   - app-network
+
+
+ gtm-sst:
+  image: gcr.io/cloud-tagging-10302018/gtm-cloud-image:stable
+  restart: always
+  ports:
+   - "127.0.0.1:8081:8080"
+  environment:
+   CONTAINER_CONFIG: "aWQ9R1RNLVRRNE5NWDhWJmVudj0xJmF1dGg9dnRmOXBpWTdEVDFVc3hSVnpOVW15dw=="
+   PREVIEW_SERVER_URL: "https://torahair.com/analytics/preview"
+  networks:
+   - app-network
+
+
+
+networks:
+ app-network:
+  external: true
