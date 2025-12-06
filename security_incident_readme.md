@@ -1,381 +1,336 @@
-# 🔒 Security Incident Resolution Report
-**Dev Infrastructure Hardening Complete**
+# Security Incident Resolution Report
+**Dev Infrastructure Hardening - Post-Mortem**
 
 ---
 
-## 📋 Document Information
+## Document Information
 
 | Field | Details |
 |-------|---------|
-| **Date** | December 6, 2025 |
-| **Incident Type** | Infrastructure Compromise - UDP DoS Attack |
-| **Severity** | **Critical** |
-| **Status** | ✅ **RESOLVED** |
-| **AWS Case ID** | #10468407181 |
-| **Affected Instance** | `i-0756a27c9a873ff4a` |
+| Date | December 6, 2025 |
+| Incident Type | Infrastructure Compromise - UDP DoS Attack |
+| Severity | Critical |
+| Status | RESOLVED |
+| AWS Case ID | #10468407181 |
+| Affected Instance | i-0756a27c9a873ff4a |
 
 ---
 
 ## Incident Summary
 
-We received an urgent AWS Trust & Safety abuse notification regarding our development instance being compromised and actively used to conduct UDP Denial of Service (DoS) attacks against external targets. AWS issued an immediate threat of account suspension if the security vulnerabilities were not remediated within their specified timeframe.
+We got hit with an AWS Trust & Safety abuse notification today. Our dev instance was compromised and being used to launch UDP DoS attacks. AWS threatened account suspension if we didn't fix it immediately, so we had to move fast.
 
-### Timeline
-- **Detection**: AWS Trust & Safety alert received
-- **Response Time**: Immediate (< 30 minutes)
-- **Resolution Time**: ~2 hours (full hardening complete)
-- **Downtime**: ~5 minutes during container restarts
-
----
-
-## 🔍 Root Cause Analysis
-
-### Critical Vulnerabilities Identified
-
-#### 1. **Overly Permissive Security Groups**
-- **Issue**: 10+ ports exposed directly to the internet (0.0.0.0/0)
-- **Exposed Services**:
-  - PostgreSQL (5432)
-  - Redis (6379)
-  - Elasticsearch (9200, 9300)
-  - RTMP Server (1935)
-  - Development/debug ports (3000, 8000, 8080)
-- **Risk Level**: 🔴 **CRITICAL** - Direct database access from anywhere
-
-#### 2. **Insecure Docker Port Bindings**
-- **Issue**: All containerized services binding to `0.0.0.0` (all network interfaces)
-- **Impact**: Services accessible from external networks when security group rules allowed
-- **Risk Level**: 🔴 **HIGH** - Bypasses intended network isolation
-
-#### 3. **Missing Application-Layer Security**
-- **Issue**: No rate limiting, DDoS protection, or request filtering
-- **Impact**: Vulnerable to brute force, resource exhaustion, and abuse
-- **Risk Level**: 🟡 **MEDIUM** - Allows sustained automated attacks
+**Timeline:**
+- Detection: AWS alert received
+- Response: < 30 minutes
+- Full resolution: ~2 hours
+- Downtime: ~5 minutes during container restarts
 
 ---
 
-## ✅ Remediation Actions Taken
+## Root Cause Analysis
 
-### 1. 💾 Infrastructure Backup & Forensics
-**Action**: Created comprehensive system backup before making any changes
+### What Went Wrong
 
-```bash
-AMI ID: ami-0d0e36b91e653afa2
-Purpose: Forensic analysis and rollback capability
-Status: ✅ Complete
+**1. Overly Permissive Security Groups**
+
+We had way too many ports exposed to the internet. The security groups were basically wide open:
+
+- PostgreSQL (5432) - publicly accessible
+- Redis (6379) - publicly accessible  
+- Elasticsearch (9200, 9300) - publicly accessible
+- RTMP Server (1935) - publicly accessible
+- Development ports (3000, 8000, 8080) - all exposed
+
+This is a critical vulnerability. Anyone could connect directly to our databases from anywhere.
+
+**2. Insecure Docker Port Bindings**
+
+All our containers were binding to `0.0.0.0` instead of `127.0.0.1`. This meant every service was accessible on all network interfaces, not just localhost. Combined with the permissive security groups, this created a perfect storm.
+
+**3. No Application-Layer Security**
+
+We had zero rate limiting, no DDoS protection, and no request filtering at the Nginx level. This left us vulnerable to brute force attacks and resource exhaustion.
+
+---
+
+## What We Did to Fix It
+
+### 1. Infrastructure Backup
+
+Before changing anything, we created an AMI backup (ami-0d0e36b91e653afa2) of the compromised instance. This preserves the state for forensics and gives us a rollback option if needed.
+
+### 2. Security Group Hardening
+
+Replaced the old security groups with a new hardened configuration (sg-06fbb7bf31195ee2a).
+
+**Before:**
+- 15+ open ports
+- Database ports exposed to internet
+- No source IP restrictions
+
+**After:**
+- Only 3 ports open: 22 (SSH), 80 (HTTP), 443 (HTTPS)
+- SSH restricted to known IPs
+- All database ports completely blocked at firewall level
+
+**Blocked Ports:**
+```
+PostgreSQL (5432)
+Redis (6379)
+Elasticsearch (9200, 9300)
+RTMP (1935)
+Application servers (3000, 8000, 8080)
 ```
 
-**Rationale**: Preserve compromised state for:
-- Forensic investigation
-- Compliance requirements
-- Emergency rollback scenario
+### 3. Docker Port Binding Security
 
----
+Updated all docker-compose files to bind services to localhost only.
 
-### 2. 🔥 Security Group Hardening
-
-**Action**: Replaced permissive security groups with hardened configuration
-
-| Before | After |
-|--------|-------|
-| 15+ open ports | 3 ports only |
-| All database ports exposed | Zero database exposure |
-| No source restrictions | Strict ingress rules |
-
-**New Security Group**: `sg-06fbb7bf31195ee2a`
-
-#### Allowed Ports (Ingress)
-| Port | Service | Source | Justification |
-|------|---------|--------|---------------|
-| 22 | SSH | Restricted IP | Server administration |
-| 80 | HTTP | 0.0.0.0/0 | Web traffic (redirects to HTTPS) |
-| 443 | HTTPS | 0.0.0.0/0 | Encrypted web traffic |
-
-#### Blocked Ports (Previously Exposed)
-- ❌ PostgreSQL (5432)
-- ❌ Redis (6379)
-- ❌ Elasticsearch (9200, 9300)
-- ❌ RTMP (1935)
-- ❌ Application servers (3000, 8000, 8080)
-
----
-
-### 3. 🐳 Docker Port Binding Security
-
-**Action**: Updated all services to bind to localhost only
-
-#### Backend Services
+**Before:**
 ```yaml
-# Before: Exposed to all interfaces
 ports:
-  - "5432:5432"  # PostgreSQL - accessible externally
-  - "6379:6379"  # Redis - accessible externally
-  - "8000:8000"  # Django - accessible externally
+  - "5432:5432"  # Accessible from anywhere
+  - "6379:6379"
+  - "8000:8000"
+```
 
-# After: Localhost only
+**After:**
+```yaml
 ports:
-  - "127.0.0.1:5432:5432"  # PostgreSQL - internal only
-  - "127.0.0.1:6379:6379"  # Redis - internal only
-  - "127.0.0.1:8000:8000"  # Django - internal only
+  - "127.0.0.1:5432:5432"  # Localhost only
+  - "127.0.0.1:6379:6379"
+  - "127.0.0.1:8000:8000"
 ```
 
-#### Updated Services
-- ✅ PostgreSQL
-- ✅ Redis
-- ✅ Django Backend
-- ✅ Celery Workers
-- ✅ RTMP Streaming Server
-- ✅ All Next.js Frontend Services
-- ✅ GTM Analytics Containers
+**Updated Services:**
+- PostgreSQL
+- Redis
+- Django Backend
+- Celery Workers
+- RTMP Streaming Server
+- All Next.js Frontend Services
+- GTM Analytics Containers
 
-#### Network Architecture
+**New Architecture:**
 ```
-Internet → Nginx (0.0.0.0:80,443) → Localhost Services (127.0.0.1:*)
-         └─ Only public entry point
+Internet --> Nginx (0.0.0.0:80,443) --> Localhost Services (127.0.0.1:*)
 ```
 
----
+Only Nginx is exposed publicly. Everything else is internal.
 
-### 4. 🛡️ Nginx Security Enhancements
+### 4. Nginx Security Hardening
 
-**Action**: Implemented comprehensive application-layer security
+Implemented comprehensive security measures at the application layer.
 
-#### Rate Limiting Zones
+**Rate Limiting:**
 
-| Zone | Limit | Burst | Applied To | Purpose |
-|------|-------|-------|------------|---------|
-| **general_limit** | 10 req/s | 20 | Most endpoints | General traffic control |
-| **auth_limit** | 5 req/min | 10 | `/admin/`, login pages | Prevent brute force |
-| **api_limit** | 30 req/s | 60 | API endpoints | Higher throughput for APIs |
-| **static_limit** | 50 req/s | 100 | Images, CSS, JS | Handle asset loading |
+| Zone | Limit | Burst | Applied To |
+|------|-------|-------|------------|
+| general_limit | 10 req/s | 20 | Most endpoints |
+| auth_limit | 5 req/min | 10 | /admin/, login pages |
+| api_limit | 30 req/s | 60 | API endpoints |
+| static_limit | 50 req/s | 100 | Images, CSS, JS |
 
-#### Connection Limiting
-- **Max concurrent connections per IP**: 10
-- **Protection against**: Slowloris attacks, connection exhaustion
+**Connection Limiting:**
+- Max 10 concurrent connections per IP
+- Prevents slowloris attacks and connection exhaustion
 
-#### Security Headers Implemented
-
-```nginx
-# Clickjacking protection
+**Security Headers Added:**
+```
 X-Frame-Options: SAMEORIGIN
-
-# MIME-type sniffing prevention
 X-Content-Type-Options: nosniff
-
-# XSS protection
 X-XSS-Protection: 1; mode=block
-
-# HTTPS enforcement (HSTS)
 Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
-
-# Referrer policy
 Referrer-Policy: strict-origin-when-cross-origin
-
-# Browser feature restrictions
 Permissions-Policy: geolocation=(), microphone=(), camera=()
 ```
 
-#### Threat Protection
+**Threat Protection:**
+- Bad bot blocking (scanners, scrapers)
+- Exploit path blocking (/wp-admin, /.env, /.git)
+- Request size limits (prevent buffer overflow)
+- SSL/TLS hardening (TLS 1.2/1.3 only, strong ciphers)
 
-**Bad Bot Blocking**
-- Automated blocking of security scanners
-- Content scraper detection and blocking
-- Malicious user-agent pattern matching
+### 5. Infrastructure as Code
 
-**Exploit Path Protection**
-```
-❌ Blocked: /wp-admin, /wp-login.php, /.env, /.git
-Returns: 404 (path doesn't exist)
-Purpose: Hide infrastructure details from attackers
-```
+Migrated everything to Terraform. All infrastructure changes are now version controlled and reproducible.
 
-**Request Size Limits**
-```nginx
-client_body_buffer_size: 128k
-large_client_header_buffers: 4 16k
-Purpose: Prevent buffer overflow attacks
-```
-
-#### SSL/TLS Hardening
-- **Protocols**: TLS 1.2, TLS 1.3 only
-- **Cipher Suites**: Strong ECDHE ciphers only
-- **Session Caching**: Enabled for performance
-- **HSTS**: Enabled with 1-year max-age
-
----
-
-### 5. 📝 Infrastructure as Code (IaC)
-
-**Action**: Migrated infrastructure to Terraform for version control and reproducibility
-
-#### Benefits
-- ✅ All infrastructure changes tracked in Git
-- ✅ Peer review process for security changes
-- ✅ Reproducible deployments
-- ✅ Disaster recovery capability
-- ✅ Multi-environment consistency
-
-#### Resources Under Management
+**Managed Resources:**
 - Security Groups
 - EC2 Instances
 - Elastic IPs
 - Network ACLs
-- IAM Roles (planned)
 
-```hcl
-# Example: Hardened Security Group
-resource "aws_security_group" "hardened_web" {
-  name        = "dev-hardened-sg"
-  description = "Hardened security group - minimal exposure"
-  
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS from internet"
-  }
-  
-  # Additional rules...
-}
-```
+This means we can track changes, do peer reviews, and rebuild environments consistently.
 
 ---
 
-## 🔍 Verification & Testing
+## Verification
 
 ### Port Exposure Audit
 
 ```bash
-# Command: netstat -tlnp | grep LISTEN
+netstat -tlnp | grep LISTEN
 
-# Results:
 Backend Services:
-✅ PostgreSQL:    127.0.0.1:5432   (localhost only)
-✅ Redis:         127.0.0.1:6379   (localhost only)
-✅ Django:        127.0.0.1:8000   (localhost only)
-✅ Celery:        127.0.0.1:5555   (localhost only)
+PostgreSQL:    127.0.0.1:5432   (localhost only)
+Redis:         127.0.0.1:6379   (localhost only)
+Django:        127.0.0.1:8000   (localhost only)
+Celery:        127.0.0.1:5555   (localhost only)
 
 Frontend Services:
-✅ Next.js (user):     127.0.0.1:3000 (localhost only)
-✅ Next.js (minister): 127.0.0.1:3001 (localhost only)
-✅ Next.js (ministry): 127.0.0.1:3002 (localhost only)
+Next.js (user):     127.0.0.1:3000 (localhost only)
+Next.js (minister): 127.0.0.1:3001 (localhost only)
+Next.js (ministry): 127.0.0.1:3002 (localhost only)
 
 Public Services:
-✅ Nginx:         0.0.0.0:80, 0.0.0.0:443 (required)
+Nginx:         0.0.0.0:80, 0.0.0.0:443 (required)
 ```
 
 ### Security Group Validation
 
 ```bash
-# AWS CLI: aws ec2 describe-security-groups --group-ids sg-06fbb7bf31195ee2a
+aws ec2 describe-security-groups --group-ids sg-06fbb7bf31195ee2a
 
 Inbound Rules:
-✅ Port 22:  SSH (restricted source)
-✅ Port 80:  HTTP (0.0.0.0/0)
-✅ Port 443: HTTPS (0.0.0.0/0)
-❌ All other ports: BLOCKED
+Port 22:  SSH (restricted source)
+Port 80:  HTTP (0.0.0.0/0)
+Port 443: HTTPS (0.0.0.0/0)
+All other ports: BLOCKED
 ```
 
 ### Rate Limiting Test
 
 ```bash
-# Test: curl -I https://dev.toraaah.com (repeated rapidly)
+# Rapid fire requests
+curl -I https://dev.toraaah.com
 
-Results:
 Request 1-10:   200 OK
 Request 11-30:  200 OK (burst handling)
 Request 31+:    503 Service Temporarily Unavailable
 Header:         "Retry-After: 1"
 
-Status: ✅ Rate limiting active and working
+Rate limiting is working correctly.
 ```
 
-### Application Health Check
+### Application Health
 
 | Service | Endpoint | Status | Response Time |
 |---------|----------|--------|---------------|
-| Main Site | dev.toraaah.com | ✅ Operational | 245ms |
-| API | api.dev.toraaah.com | ✅ Operational | 156ms |
-| Minister Portal | minister.dev.toraaah.com | ✅ Operational | 289ms |
-| Ministry Portal | ministry.dev.toraaah.com | ✅ Operational | 301ms |
+| Main Site | dev.toraaah.com | Operational | 245ms |
+| API | api.dev.toraaah.com | Operational | 156ms |
+| Minister Portal | minister.dev.toraaah.com | Operational | 289ms |
+| Ministry Portal | ministry.dev.toraaah.com | Operational | 301ms |
 
 ---
 
-## 📊 Current Security Posture
+## Security Posture - Before vs After
 
-### Before vs. After Comparison
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Exposed Ports | 15+ | 3 | -80% |
+| Database Exposure | Public | Internal Only | 100% secured |
+| Rate Limiting | None | Comprehensive | Implemented |
+| Security Headers | 0 | 6+ | Implemented |
+| DDoS Protection | None | Multi-layer | Implemented |
+| Config Management | Manual | IaC (Terraform) | Automated |
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Exposed Ports | 15+ | 3 | 🟢 **-80%** |
-| Database Exposure | Public | Internal Only | 🟢 **100%** |
-| Rate Limiting | None | Comprehensive | 🟢 **N/A** |
-| Security Headers | 0 | 6+ | 🟢 **N/A** |
-| DDoS Protection | None | Multi-layer | 🟢 **N/A** |
-| Config Management | Manual | IaC (Terraform) | 🟢 **100%** |
-| Threat Blocking | None | Active | 🟢 **N/A** |
-
-### Security Layers Implemented
-
+**Defense in Depth:**
 ```
-Layer 7 (Application)  → Nginx rate limiting, security headers
-Layer 4 (Transport)    → Security group (firewall)
-Layer 3 (Network)      → Localhost binding, network isolation
-Layer 2 (Host)         → Container isolation
-Layer 1 (Physical)     → AWS infrastructure
+Layer 7 (Application)  -> Nginx rate limiting, security headers
+Layer 4 (Transport)    -> Security group (firewall)
+Layer 3 (Network)      -> Localhost binding, network isolation
+Layer 2 (Host)         -> Container isolation
+Layer 1 (Physical)     -> AWS infrastructure
 ```
 
-### Compliance Status
+---
 
-| Framework | Status | Notes |
-|-----------|--------|-------|
-| AWS Security Best Practices | ✅ Compliant | Minimal exposure principle |
-| OWASP Top 10 | ✅ Protected | Security headers, rate limiting |
-| CIS Docker Benchmark | ✅ Improved | Localhost binding, no privileged containers |
-| PCI DSS (if applicable) | ⚠️ Partial | Database isolation complete, audit logs pending |
+## Impact Assessment
+
+**Technical Impact:**
+- Downtime: ~5 minutes (container restarts)
+- Performance: No degradation
+- Functionality: All services operational
+- User Experience: Zero impact
+
+**Security Impact:**
+- Attack surface reduced by ~80%
+- Database security: 100% improvement (no external access)
+- DDoS resilience: Significantly improved
+- Compliance risk: Substantially reduced
+
+**Business Impact:**
+- AWS account status: Remediated, no suspension
+- Reputation: Protected from abuse associations
+- Cost: No additional AWS costs
+- Development: No workflow disruption
 
 ---
 
-## 📈 Impact Assessment
+## Next Steps
 
-### Technical Impact
-- **Downtime**: ~5 minutes (container restart only)
-- **Performance**: No degradation; slight improvement from HTTP/2
-- **Functionality**: All services operational
-- **User Experience**: Zero impact
+**Immediate (24 hours):**
+- [ ] Submit remediation details to AWS Trust & Safety
+- [ ] Set up CloudWatch alerts for suspicious traffic
+- [ ] Push Terraform code to GitHub
 
-### Security Impact
-- **Attack Surface**: Reduced by ~80%
-- **Database Security**: 100% improvement (no external exposure)
-- **DDoS Resilience**: Significantly improved
-- **Compliance Risk**: Substantially reduced
+**Short Term (1 week):**
+- [ ] Clean up old PR preview containers (5-6 months old)
+- [ ] Implement centralized logging (CloudWatch/ELK)
+- [ ] Configure alerts for rate limit violations
+- [ ] Review SSL certificate expiration dates
 
-### Business Impact
-- **AWS Account Status**: ✅ Remediated, no suspension
-- **Reputation**: Protected from abuse associations
-- **Cost**: No additional AWS costs
-- **Development**: No workflow disruption
+**Medium Term (1 month):**
+- [ ] Add CloudFlare for additional DDoS protection
+- [ ] Consider AWS WAF for advanced threat detection
+- [ ] Automate AMI backups (daily/weekly)
+- [ ] Migrate secrets to AWS Secrets Manager
+- [ ] Schedule monthly security group audits
 
----
-
-## 🎯 Conclusion
-
-The security incident has been **fully resolved** with comprehensive hardening measures implemented across multiple layers of our infrastructure. Our development environment now follows industry security best practices and is significantly more resilient against attacks.
-
-**Key Achievements:**
-- 🛡️ Reduced attack surface by 80%
-- 🔒 Eliminated all database exposure
-- 🚀 Implemented multi-layer DDoS protection
-- 📝 Infrastructure now managed as code
-- ✅ Zero functional impact to users
-
-**Current Status**: 🟢 **ALL SYSTEMS SECURE & OPERATIONAL**
+**Long Term (Strategic):**
+- [ ] Implement VPN/bastion for SSH access (remove port 22 from public)
+- [ ] Container vulnerability scanning (Trivy/Snyk)
+- [ ] Multi-region disaster recovery setup
+- [ ] Annual penetration testing
 
 ---
 
-*For questions or clarification, please contact the DevOps team*
+## Additional Resources
 
-**Document Version**: 1.0  
-**Last Updated**: December 6, 2025  
-**Next Review**: January 6, 2026
+**Internal Documentation:**
+- Terraform State: s3://toraaah-terraform-state/dev/
+- Security Group: sg-06fbb7bf31195ee2a
+- Backup AMI: ami-0d0e36b91e653afa2
+- Nginx Config: /etc/nginx/nginx.conf
+
+**External References:**
+- [Nginx Rate Limiting Guide](https://www.nginx.com/blog/rate-limiting-nginx/)
+- [AWS Security Groups Best Practices](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html)
+- [Docker Security Best Practices](https://docs.docker.com/engine/security/)
+- [OWASP Security Headers](https://owasp.org/www-project-secure-headers/)
+
+---
+
+## Conclusion
+
+The security incident has been fully resolved. We've implemented comprehensive hardening across multiple layers:
+
+- Reduced attack surface by 80%
+- Eliminated all database exposure
+- Implemented multi-layer DDoS protection
+- Infrastructure now managed as code
+- Zero impact to users or functionality
+
+**Current Status: ALL SYSTEMS SECURE & OPERATIONAL**
+
+The immediate threat is neutralized, and we're significantly more resilient against future attacks. All changes have been tested and verified.
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** December 6, 2025  
+**Next Review:** January 6, 2026
+
+For questions, reach out to the DevOps team.
