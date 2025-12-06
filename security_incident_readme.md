@@ -269,50 +269,6 @@ Layer 1 (Physical)     -> AWS infrastructure
 
 ---
 
-## Next Steps
-
-**Immediate (24 hours):**
-- [ ] Submit remediation details to AWS Trust & Safety
-- [ ] Set up CloudWatch alerts for suspicious traffic
-- [ ] Push Terraform code to GitHub
-
-**Short Term (1 week):**
-- [ ] Clean up old PR preview containers (5-6 months old)
-- [ ] Implement centralized logging (CloudWatch/ELK)
-- [ ] Configure alerts for rate limit violations
-- [ ] Review SSL certificate expiration dates
-
-**Medium Term (1 month):**
-- [ ] Add CloudFlare for additional DDoS protection
-- [ ] Consider AWS WAF for advanced threat detection
-- [ ] Automate AMI backups (daily/weekly)
-- [ ] Migrate secrets to AWS Secrets Manager
-- [ ] Schedule monthly security group audits
-
-**Long Term (Strategic):**
-- [ ] Implement VPN/bastion for SSH access (remove port 22 from public)
-- [ ] Container vulnerability scanning (Trivy/Snyk)
-- [ ] Multi-region disaster recovery setup
-- [ ] Annual penetration testing
-
----
-
-## Additional Resources
-
-**Internal Documentation:**
-- Terraform State: s3://toraaah-terraform-state/dev/
-- Security Group: sg-06fbb7bf31195ee2a
-- Backup AMI: ami-0d0e36b91e653afa2
-- Nginx Config: /etc/nginx/nginx.conf
-
-**External References:**
-- [Nginx Rate Limiting Guide](https://www.nginx.com/blog/rate-limiting-nginx/)
-- [AWS Security Groups Best Practices](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html)
-- [Docker Security Best Practices](https://docs.docker.com/engine/security/)
-- [OWASP Security Headers](https://owasp.org/www-project-secure-headers/)
-
----
-
 ## Conclusion
 
 The security incident has been fully resolved. We've implemented comprehensive hardening across multiple layers:
